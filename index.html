@@ -251,9 +251,9 @@
         <h1>SPECTRUM CORTO</h1>
 
         <form id="urlForm" autocomplete="off">
-            <label for="urlInput">Detectará el código duplicado o transaction_id</label>
+            <label for="urlInput">Ingresa la URL o el código de 22 caracteres</label>
             <input type="text" id="urlInput" name="url" required
-                placeholder="Ej. https://walr.com/?transaction_id=... or just the ID" autocomplete="off">
+                placeholder="Ej. https://walr.com/?transaction_id=... o el código directamente" autocomplete="off">
 
             <button type="submit">Generar Link</button>
         </form>
@@ -264,11 +264,6 @@
         <p id="error" class="error hidden"></p>
     </div>
 
-
-
-
-
-
     <script>
         function copyToClipboard(url) {
             navigator.clipboard.writeText(url).then(() => {
@@ -276,117 +271,135 @@
                 notification.classList.remove('hidden');
                 setTimeout(() => {
                     notification.classList.add('hidden');
-                }, 3000); // Reducir el tiempo a 3 segundos
+                }, 10000); // Mostar 10 segundos
             }).catch(() => {
                 alert('Error al copiar al portapapeles');
             });
         }
 
-        function processUrlWithSpectrumId(url) {
+        // Función para obtener datos del archivo TXT
+        async function obtenerDatos(url) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.text();
+                return parseData(data);
+            } catch (error) {
+                console.error('Error al obtener los datos:', error);
+                displayErrorMessage('Error: No se pudo cargar la configuración. Verifica tu conexión a Internet.');
+                return [];
+            }
+        }
+
+        // Función para parsear los datos del TXT
+        function parseData(data) {
+            return data.split('----------------')
+                .filter(entry => entry.trim())
+                .map(entry => {
+                    const lines = entry.trim().split('\n');
+                    const entryData = {};
+                    lines.forEach(line => {
+                        const [key, value] = line.split(': ').map(s => s.trim());
+                        if (key && value) entryData[key] = value;
+                    });
+                    return entryData;
+                });
+        }
+
+        function processUrlWithSpectrumId(url, data) {
             try {
                 let generatedUrl = null;
-                const BASE_URL_SPECTRUM = "https://spectrumsurveys.com/surveydone?st=21&transaction_id=";
-
                 let spectrumId = null;
+                let foundEntry = null;
 
                 // 1. Limpieza inicial: Eliminar espacios en blanco al principio y al final
                 url = url.trim();
 
-                  // 2. Validación y uso directo del código si cumple con el formato (22 caracteres)
-                 if (/^[A-Za-z0-9]{22}$/.test(url)) {
+                // 2. Validación y uso directo del código si cumple con el formato
+                if (/^[A-Za-z0-9]{22}$/.test(url)) {
                     spectrumId = url;
-                    generatedUrl = `${BASE_URL_SPECTRUM}${spectrumId}`;
+                } else {
+                    // 3. Buscar entrada por nombre (parcial o exacto)
+                    foundEntry = data.find(entry => {
+                        const nombre = entry.Nombre ? entry.Nombre.trim().toLowerCase() : '';
+                        return url.toLowerCase().includes(nombre);
+                    });
+
+                    if (!foundEntry) {
+                        console.warn("No se encontró una entrada coincidente en el archivo de configuración.");
+                        return null; // Sale si no encuentra el Nombre
+                    }
+
+                    if (url.startsWith('http://') || url.startsWith('https://')) {
+                        const urlParams = new URL(url).searchParams;
+                        spectrumId = urlParams.get('transaction_id') || urlParams.get('trans_id') || urlParams.get('paid') || urlParams.get('id') || urlParams.get('rid') || urlParams.get('ps_hash');
+                    }
+
+                    if (!spectrumId || !/^[A-Za-z0-9]{22}$/.test(spectrumId)) {
+                        console.warn("No se encontró un ID válido (22 caracteres) en la URL.");
+                        if (foundEntry.URL.includes("ps_hash")) {
+                            if (!/^[A-Za-z0-9]{8}$/.test(spectrumId)) {
+                                console.warn("No se encontró un hash válido (8 caracteres) en la URL.");
+                                return null;
+                            }
+                        } else {
+                            return null;
+                        }
+                    }
+                }
+                let baseURL = foundEntry ? foundEntry.URL : null;
+                if (!baseURL) {
+                    console.warn("No se encontró URL en el archivo de configuración.");
+                    return null; // Sale si no encuentra la baseURL
+                }
+                // Validate against the data.txt entry
+                if (foundEntry && foundEntry.URL && !url.startsWith(foundEntry.URL)) {
+                    // If ps_hash is involved, just keep that part of base URL
+                    if (baseURL.includes("ps_hash")) {
+                        const baseUrlWithoutParams = baseURL.split('?')[0]; // Extract base URL without query params
+                        generatedUrl = `${baseUrlWithoutParams}?st=21&ps_hash=${spectrumId}&transaction_id=`;
+                    } else {
+                        generatedUrl = `${baseURL}${spectrumId}`;
+                    }
+
+                }
+
+
+                generatedUrl = `${baseURL}${spectrumId}`;
+
+                if (baseURL.includes("ps_hash=")) {
+                    // if (/^[A-Za-z0-9]{8}$/.test(spectrumId)) {
+                    //   return generatedUrl
+                    //}else{
+                    //   return null
+                    // }
+                    if (/^[A-Za-z0-9]{8}$/.test(spectrumId)) {
+                        return generatedUrl
+                    } else {
+                        return null
+                    }
+                } else {
                     return generatedUrl;
                 }
 
-                // 3. Búsqueda de parámetros conocidos (PRIORIZADO)
-                if (url.startsWith('http://') || url.startsWith('https://')) {
-                    const urlParams = new URL(url).searchParams;
-                    spectrumId = urlParams.get('transaction_id') || urlParams.get('trans_id') || urlParams.get('paid') || urlParams.get('id') || urlParams.get('rid');
 
-                    if (spectrumId && /^[A-Za-z0-9]{22}$/.test(spectrumId)) {  // Longitud específica de 22
-                        generatedUrl = `${BASE_URL_SPECTRUM}${spectrumId}`;
-                        return generatedUrl;
-                    }
-                }
-
-                // 4. Búsqueda de duplicados (REQUIERE LONGITUD ESPECÍFICA)
-                if (url.startsWith('http://') || url.startsWith('https://')) {
-                    const regexDupFinder = /([A-Za-z0-9]{22})(?:.*?\1)/g;  // Longitud específica de 22
-                    const matches = Array.from(url.matchAll(regexDupFinder));
-
-                    if (matches.length > 0) {
-                        spectrumId = matches[0][1];
-                        generatedUrl = `${BASE_URL_SPECTRUM}${spectrumId}`;
-                        return generatedUrl;
-                    }
-                }
-
-                // 5. Búsqueda inteligente del código (SOLO SI NO SE ENCUENTRA NADA MÁS) - YA NO ES NECESARIA PERO SE MANTIENE POR SI ACASO
-                if (url.startsWith('http://') || url.startsWith('https://')) {
-                    try {
-                        const urlObj = new URL(url);
-                        const segmentos = urlObj.pathname.split('/').filter(Boolean).concat(Array.from(urlObj.searchParams.values()));
-
-                        let mejorSegmento = null;
-                        let mejorPuntuacion = 0;
-
-                        for (const segmento of segmentos) {
-                            let puntuacion = 0;
-
-                            // Verificar Longitud (RANGO DE LONGITUD ESPECÍFICO)
-                            if (segmento.length === 22) {
-                                puntuacion++;
-                            }
-
-                            // Verificar Composición (Alfanumérico)
-                            if (/^[A-Za-z0-9]+$/.test(segmento)) {
-                                puntuacion++;
-                            }
-
-                            // Verificar Entorno (precedido/seguido por = o &)
-                            if (url.includes(`=${segmento}`) || url.includes(`&${segmento}`)) {
-                                puntuacion++;
-                            }
-
-                            // Actualizar el mejor segmento
-                            if (puntuacion > mejorPuntuacion) {
-                                mejorPuntuacion = puntuacion;
-                                mejorSegmento = segmento;
-                            }
-                        }
-
-                        if (mejorSegmento) {
-                            spectrumId = mejorSegmento;
-                             if (/^[A-Za-z0-9]{22}$/.test(spectrumId)) {
-                            generatedUrl = `${BASE_URL_SPECTRUM}${spectrumId}`;
-                            return generatedUrl;
-                            }
-                        }
-                    } catch (e) {
-                        console.warn("Invalid URL format.  ", e);
-                        return null;
-                    }
-                }
-
-
-                console.warn("No Spectrum ID found using correct method.");
-                return null;
             } catch (error) {
                 console.error('Error al procesar la URL:', error);
                 return null;
             }
         }
 
-        function dispatchUrl(url) {
+        function dispatchUrl(url, data) {
             if (!url.trim()) {
-                return Promise.reject("URL no válida: Ingrese un link correcto.");
+                return Promise.reject("Error: Ingresa una URL o código.");
             }
 
             return new Promise((resolve, reject) => {
-                let spectrumResult = processUrlWithSpectrumId(url);
-                if (spectrumResult) return resolve(spectrumResult);
-                else return reject("No se encontró un ID de Spectrum válido en el formato esperado (22 caracteres alfanuméricos).");  // MENSAJE DE ERROR ESPECÍFICO
+                let spectrumResult = processUrlWithSpectrumId(url, data);
+                if (spectrumResult) return resolve({generatedUrl:spectrumResult, originalUrl: url});
+                else return reject("Error: No se pudo generar un link válido. Verifica que la URL o el código sean correctos y que haya una configuración coincidente."); //Error mas descriptivo
             });
         }
 
@@ -400,38 +413,53 @@
             }, 5000);
         }
 
-        document.getElementById('urlForm').addEventListener('submit', function (event) {
-            event.preventDefault();
+        document.addEventListener('DOMContentLoaded', async () => {
+            const urlForm = document.getElementById('urlForm');
             const urlInput = document.getElementById('urlInput');
+            const generatedUrlElement = document.getElementById('generatedUrl');
+            const generatedTitleElement = document.getElementById('generatedTitle');
 
-            dispatchUrl(urlInput.value)
-                .then(result => {
-                    const generatedUrlElement = document.getElementById('generatedUrl');
-                    const generatedTitleElement = document.getElementById('generatedTitle');
-                    const errorElement = document.getElementById('error');
 
-                    generatedTitleElement.classList.add('hidden');
-                    generatedUrlElement.classList.add('hidden');
-                    errorElement.classList.add('hidden');
+            const errorElement = document.getElementById('error');
 
-                    if (result && typeof result === 'string') {
-                        generatedTitleElement.classList.remove('hidden');
-                        generatedUrlElement.classList.remove('hidden');
-                        generatedUrlElement.innerText = result;
-                        copyToClipboard(result);
-                    }
-                })
-                .catch(error => {
-                    console.error('Error en la solicitud:', error);
-                    displayErrorMessage(error);
-                });
+            // Cargar y parsear datos del archivo TXT
+            const datosURL = 'https://raw.githubusercontent.com/UnevennesX/-CheckLinks-/main/datos-info.txt';
+            let configData = []; // Initialize configData outside the try block
+
+            try {
+                configData = await obtenerDatos(datosURL);
+            } catch (error) {
+                console.error('Error al cargar los datos:', error);
+                displayErrorMessage('Error: No se pudo cargar la configuración inicial. Verifica tu conexión a Internet.');
+            }
+
+            urlForm.addEventListener('submit', function (event) {
+                event.preventDefault();
+
+
+                dispatchUrl(urlInput.value, configData)
+                    .then(result => {
+                        generatedTitleElement.classList.add('hidden');
+                        generatedUrlElement.classList.add('hidden');
+                        errorElement.classList.add('hidden');
+
+                        if (result && typeof result.generatedUrl === 'string') {
+                            generatedTitleElement.classList.remove('hidden');
+                            generatedUrlElement.classList.remove('hidden');
+                            generatedUrlElement.innerText = result.generatedUrl;
+
+
+                            copyToClipboard(result.generatedUrl);
+
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error en la solicitud:', error);
+                        displayErrorMessage(error);
+                    });
+            });
         });
     </script>
-
-
-
-
-    
 </body>
 
 </html>

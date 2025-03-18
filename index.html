@@ -3,8 +3,8 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Herramienta URL - Spectrum</title>
+    <meta name="viewport" content="width=device-width, initial-scale: 1.0">
+    <title>ALL Spectrum</title>
     <link rel="icon" type="image/png"
         href="https://cdn.dribbble.com/users/7549673/screenshots/17206704/media/1210a9d0ec8af427967e735935861eeb.png?resize=400x300&vertical=center" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -174,7 +174,7 @@
             font-weight: 500;
             border-radius: var(--border-radius);
             text-align: center;
-            animation: slideIn 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+            animation: slideIn 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
             box-shadow: 0 3px 7px rgba(0, 0, 0, 0.2);
         }
 
@@ -190,7 +190,7 @@
             box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
             z-index: 1000;
             font-size: 17px;
-            animation: slideInError 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards, fadeOutError 4s forwards;
+            animation: slideInError 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
         }
 
         @keyframes slideIn {
@@ -251,7 +251,7 @@
         <h1>ALL SPECTRUM</h1>
 
         <form id="urlForm" autocomplete="off">
-            <label for="urlInput">Ingresa la URL o el código de 22 caracteres</label>
+            <label for="urlInput">Se genera en base al .txt UnevennesX</label>
             <input type="text" id="urlInput" name="url" required
                 placeholder="Ej. https://walr.com/?transaction_id=... o el código directamente" autocomplete="off">
 
@@ -265,15 +265,15 @@
     </div>
 
     <script>
+        let notificationTimeout; // Store the timeout for the notification
+        let errorTimeout; // Store the timeout for the error message
+
+
         function copyToClipboard(url) {
             navigator.clipboard.writeText(url).then(() => {
-                let notification = document.getElementById('notification');
-                notification.classList.remove('hidden');
-                setTimeout(() => {
-                    notification.classList.add('hidden');
-                }, 10000); // Mostar 10 segundos
+                showNotification("URL Copiada!");
             }).catch(() => {
-                alert('Error al copiar al portapapeles');
+                showErrorMessage('Error al copiar. Intenta de nuevo.');
             });
         }
 
@@ -288,7 +288,7 @@
                 return parseData(data);
             } catch (error) {
                 console.error('Error al obtener los datos:', error);
-                displayErrorMessage('Error: No se pudo cargar la configuración. Verifica tu conexión a Internet.');
+                showErrorMessage('No se pudo cargar la configuración.');
                 return [];
             }
         }
@@ -329,7 +329,7 @@
 
                     if (!foundEntry) {
                         console.warn("No se encontró una entrada coincidente en el archivo de configuración.");
-                        return null; // Sale si no encuentra el Nombre
+                        throw new Error("No encontrado en la base de datos.");
                     }
 
                     if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -342,17 +342,17 @@
                         if (foundEntry.URL.includes("ps_hash")) {
                             if (!/^[A-Za-z0-9]{8}$/.test(spectrumId)) {
                                 console.warn("No se encontró un hash válido (8 caracteres) en la URL.");
-                                return null;
+                                throw new Error("Hash inválido.");
                             }
                         } else {
-                            return null;
+                            throw new Error("ID inválido.");
                         }
                     }
                 }
                 let baseURL = foundEntry ? foundEntry.URL : null;
                 if (!baseURL) {
                     console.warn("No se encontró URL en el archivo de configuración.");
-                    return null; // Sale si no encuentra la baseURL
+                    throw new Error("URL base no configurada.");
                 }
                 // Validate against the data.txt entry
                 if (foundEntry && foundEntry.URL && !url.startsWith(foundEntry.URL)) {
@@ -370,47 +370,70 @@
                 generatedUrl = `${baseURL}${spectrumId}`;
 
                 if (baseURL.includes("ps_hash=")) {
-                    // if (/^[A-Za-z0-9]{8}$/.test(spectrumId)) {
-                    //   return generatedUrl
-                    //}else{
-                    //   return null
-                    // }
-                    if (/^[A-Za-z0-9]{8}$/.test(spectrumId)) {
-                        return generatedUrl
-                    } else {
-                        return null
+
+                    if (!/^[A-Za-z0-9]{8}$/.test(spectrumId)) {
+                       throw new Error("Hash inválido.");
                     }
-                } else {
-                    return generatedUrl;
                 }
+
+                return generatedUrl;
 
 
             } catch (error) {
                 console.error('Error al procesar la URL:', error);
+                 showErrorMessage("Error: " + error.message); // Show simplified error from processUrl
                 return null;
             }
         }
 
         function dispatchUrl(url, data) {
             if (!url.trim()) {
-                return Promise.reject("Error: Ingresa una URL o código.");
+                showErrorMessage("Ingresa una URL o código."); // Directly display message and resolve
+                return Promise.resolve(); // Immediately resolve the promise to prevent further execution.
             }
 
             return new Promise((resolve, reject) => {
                 let spectrumResult = processUrlWithSpectrumId(url, data);
-                if (spectrumResult) return resolve({generatedUrl:spectrumResult, originalUrl: url});
-                else return reject("Error: No se pudo generar un link válido. Verifica que la URL o el código sean correctos y que haya una configuración coincidente."); //Error mas descriptivo
+                if (spectrumResult) {
+                    resolve({generatedUrl: spectrumResult, originalUrl: url });
+                } else {
+                    // Errors are displayed in processUrlWithSpectrumId function, so there is no need to have a message.
+                    reject();
+                }
+
             });
         }
 
-        function displayErrorMessage(message) {
+        function showErrorMessage(message) {
             const errorElement = document.getElementById('error');
+
+            // Clear any existing timeout
+            clearTimeout(errorTimeout);
+
             errorElement.innerText = message;
             errorElement.classList.remove('hidden');
-            setTimeout(() => {
+
+            // Set a new timeout
+            errorTimeout = setTimeout(() => {
                 errorElement.classList.add('hidden');
                 errorElement.innerText = '';
-            }, 5000);
+            }, 7000); // 7 seconds
+        }
+
+        function showNotification(message) {
+            const notificationElement = document.getElementById('notification');
+
+            // Clear any existing timeout
+            clearTimeout(notificationTimeout);
+
+            notificationElement.innerText = message;
+            notificationElement.classList.remove('hidden');
+
+            // Set a new timeout
+            notificationTimeout = setTimeout(() => {
+                notificationElement.classList.add('hidden');
+                notificationElement.innerText = '';
+            }, 7000); // 7 seconds
         }
 
         document.addEventListener('DOMContentLoaded', async () => {
@@ -430,14 +453,17 @@
                 configData = await obtenerDatos(datosURL);
             } catch (error) {
                 console.error('Error al cargar los datos:', error);
-                displayErrorMessage('Error: No se pudo cargar la configuración inicial. Verifica tu conexión a Internet.');
+                showErrorMessage('No se pudo cargar la configuración.');
             }
 
             urlForm.addEventListener('submit', function (event) {
                 event.preventDefault();
 
+                // Filter data for 'Spectrum' type only
+                const spectrumData = configData.filter(entry => entry['Tipo de Survey'] === 'Spectrum');
 
-                dispatchUrl(urlInput.value, configData)
+
+                dispatchUrl(urlInput.value, spectrumData)
                     .then(result => {
                         generatedTitleElement.classList.add('hidden');
                         generatedUrlElement.classList.add('hidden');
@@ -454,8 +480,7 @@
                         }
                     })
                     .catch(error => {
-                        console.error('Error en la solicitud:', error);
-                        displayErrorMessage(error);
+                         // Errors are displayed in processUrlWithSpectrumId function, so there is no need to have a message.
                     });
             });
         });
